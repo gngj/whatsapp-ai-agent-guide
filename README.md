@@ -1,3 +1,76 @@
+[עברית](#hebrew) · [English](#english)
+
+<div dir="rtl" id="hebrew">
+
+# חיבור סוכן AI ל-WhatsApp (WhatsApp Cloud API): התחלה מהירה
+
+המדריך הזה מראה איך לתת לסוכן AI מספר WhatsApp משלו באמצעות ה-**WhatsApp Cloud API** הרשמי של Meta. בסיום התהליך הסוכן יוכל:
+
+- **לקבל** הודעות WhatsApp (טקסט, הודעות קוליות, תמונות, מסמכים) דרך webhook,
+- **לשלוח** תשובות והתראות (טקסט חופשי בתוך חלון 24 השעות, ותבניות מאושרות מחוצה לו),
+- **לתמלל הודעות קוליות** מקומית עם `ffmpeg` ועם `faster-whisper`.
+
+נעשה שימוש רק ב-API הרשמי של Meta. בלי אוטומציה של WhatsApp Web ובלי לקוחות לא-רשמיים. כדי להתחיל מספיק מספר הבדיקה החינמי של Meta.
+
+> המדריך המלא נמצא ב-[`docs/`](docs/). העמוד הזה הוא הגרסה המקוצרת לעמוד אחד.
+
+## מה צריך
+
+- חשבון Facebook. גם חשבון חדש לגמרי יעבוד, אבל Meta עשויה לדרוש **המתנה של בערך שעה** לפני שהיא מאפשרת ליצור business portfolio.
+- טלפון עם WhatsApp לשליחה ולקבלה של הודעות בדיקה. חייב להיות מספר שונה ממספר העסק.
+- כתובת **HTTPS** ציבורית ל-webhook: webhook relay מתארח, פונקציית serverless, או מנהרה (tunnel) אל המחשב שלכם.
+- `curl`. להודעות קוליות צריך גם Python 3.10+, `ffmpeg` ו-`faster-whisper`.
+
+## עשרת השלבים
+
+1. **חשבון Facebook.** יוצרים אחד חדש, או משתמשים בקיים. מאמתים אותו באימייל.
+2. **מפתח Meta.** ב-[developers.facebook.com](https://developers.facebook.com) לוחצים **Get started** ומאמתים מספר נייד ב-SMS.
+3. **אפליקציה.** נכנסים ל-**My Apps → Create App**, בוחרים את תרחיש השימוש **Connect with customers through WhatsApp**, ויוצרים business portfolio או בוחרים אחד שכבר יש. אם Meta אומרת שהחשבון חדש מדי, ממתינים בערך שעה ומנסים שוב.
+4. **מספר בדיקה.** פותחים **Use cases → Customize → API Setup** (מופיע גם כ-*WhatsApp → API Setup*). Meta נותנת מספר בדיקה חינמי. מעתיקים את ה-**Phone number ID** ואת ה-**WhatsApp Business Account ID** (בדפים חדשים יותר זה נקרא *Messaging account ID*).
+5. **נמענים.** בשדה **To** מוסיפים את מספר ה-WhatsApp שלכם ומזינים את הקוד ש-WhatsApp שולח. מספר בדיקה יכול לשלוח הודעות עד חמישה נמענים מאומתים.
+6. **הודעה ראשונה.** לוחצים **Generate access token** ואחר כך **Send message**. תבנית `hello_world` אמורה להגיע לטלפון. **עונים לה.** התשובה פותחת את חלון 24 השעות.
+7. **טוקן קבוע.** ב-**Business Settings → Users → System users** מוסיפים system user. **Assign assets**: האפליקציה וחשבון ה-WhatsApp *המדויק* שמחזיק את מספר הבדיקה, שניהם עם full control. אחר כך **Generate token** עם `whatsapp_business_messaging` ועם `whatsapp_business_management`, ומגדירים שהוא לא יפוג. שומרים אותו ב-secrets manager או בקובץ עם `chmod 600`. אף פעם לא מדביקים אותו בצ'אטים, בקבצי לוג או בריפו.
+8. **Webhook.** מקימים נקודת קצה HTTPS שעונה ל-GET של `hub.challenge` מ-Meta ומקבלת בקשות POST (ראו [`examples/webhook_server.py`](examples/webhook_server.py)). ב-**Configuration → Webhook** מזינים **Callback URL** ו-**Verify token** שהמצאתם, לוחצים **Verify and save**, ואז נרשמים (subscribe) לשדה `messages`.
+9. **פרסום האפליקציה.** במצב פיתוח Meta מעבירה רק webhooks מסוג *Test* מהדשבורד, לא הודעות אמיתיות. מוסיפים **Privacy Policy URL** תחת **App settings → Basic** ומעבירים את האפליקציה ל-**Live** (**Publish**).
+10. **בדיקה מקצה לקצה.** שולחים הודעת WhatsApp למספר הבדיקה. היא אמורה להגיע ל-webhook, והסוכן יכול לענות:
+
+</div>
+
+<div dir="ltr">
+
+```bash
+curl "https://graph.facebook.com/v23.0/<PHONE_NUMBER_ID>/messages" \
+  -H "Authorization: Bearer $WHATSAPP_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"messaging_product":"whatsapp","to":"<RECIPIENT_E164_DIGITS>","type":"text","text":{"body":"Hello from my agent"}}'
+```
+
+</div>
+
+<div dir="rtl">
+
+## הודעות קוליות בפסקה אחת
+
+ה-webhook לא מכיל את האודיו. יש בו רק `audio.id`. קוראים ל-`GET /<MEDIA_ID>` עם הטוקן כדי לקבל `url` קצר-חיים, שתקף כחמש דקות. אחר כך עושים `GET` לאותו url **עם אותה כותרת Bearer** כדי להוריד את קובץ ה-`.ogg`/opus. ממירים עם `ffmpeg` ל-WAV מונו ב-16 kHz ומתמללים עם `faster-whisper`. [`examples/transcribe_voice_note.py`](examples/transcribe_voice_note.py) מבצע את כל זה, והטוקן לא יוצא מהתהליך.
+
+## המדריך המלא
+
+| מסמך | מה כלול |
+| --- | --- |
+| [01 – Meta setup, step by step](docs/01-meta-setup.md) | חשבון Facebook, רישום מפתחים, אפליקציה, מספר בדיקה, business portfolio, system user, טוקן קבוע, הגדרת webhook, פרסום |
+| [02 – Inbound webhook](docs/02-inbound-webhook.md) | לחיצת היד לאימות, payloads, אפשרויות אירוח (relay, serverless, tunnel) עם יתרונות וחסרונות |
+| [03 – Outbound messages](docs/03-outbound.md) | נקודת הקצה `/messages`, חלון 24 השעות ותבניות, שגיאות נפוצות |
+| [04 – Voice notes](docs/04-voice-notes.md) | תהליך הורדת המדיה ותמלול מקומי |
+| [05 – Testing & troubleshooting](docs/05-testing-troubleshooting.md) | רשימת בדיקה מקצה לקצה והבעיות שאנשים באמת נתקלים בהן |
+
+מצייני המיקום `<PHONE_NUMBER_ID>`, `<WABA_ID>` ו-`<RECIPIENT_E164_DIGITS>` מייצגים ערכים שלכם. דוגמאות ה-API משתמשות ב-Graph API `v23.0`. כל גרסה עדכנית תעבוד, ו[יומן השינויים של Meta](https://developers.facebook.com/docs/graph-api/changelog) מציין את האחרונה.
+
+</div>
+
+---
+
+<a id="english"></a>
+
 # Connect an AI agent to WhatsApp (WhatsApp Cloud API): Quick start
 
 This guide shows how to give an AI agent its own WhatsApp number using Meta's **official WhatsApp Cloud API**. When you're done, the agent can:
