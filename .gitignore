@@ -1,0 +1,7 @@
+.env
+*.token
+.secrets/
+events.jsonl
+media/
+.venv/
+__pycache__/
